@@ -8,7 +8,8 @@ import sys
 import os
 import argparse
 import json
-import time
+import subprocess
+import tempfile
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -55,49 +56,87 @@ def parse_args():
 def main():
     args = parse_args()
 
-    if args.file:
-        if not os.path.exists(args.file):
-            print(f"Ошибка: входной файл не найден: {args.file}", file=sys.stderr)
-            sys.exit(1)
-        with open(args.file, "r", encoding="utf-8") as f:
-            text = f.read()
-    else:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    binary_candidates = [
+        os.path.join(script_dir, "Aeterna_Rewrite_Engine"),
+        os.path.join(os.getcwd(), "Aeterna_Rewrite_Engine")
+    ]
+    binary_path = next((p for p in binary_candidates if os.path.isfile(p)), None)
+
+    temp_input = None
+    input_path = args.file
+
+    if not input_path:
         if sys.stdin.isatty():
             print("Введите текст (Ctrl+D для завершения):", file=sys.stderr)
         text = sys.stdin.read()
-
-    if not text.strip():
-        print("Ошибка: пустой ввод", file=sys.stderr)
-        sys.exit(1)
-
-    start_time = time.time()
-
-    # Интерфейсный слой Open-Core.
-    # В дистрибутиве с Kwork этот блок обращается к локальному скомпилированному ядру SynergyCore.
-    result = {
-        "status": "success",
-        "mode": args.mode,
-        "style": args.style,
-        "synergy_enabled": not args.no_synergy,
-        "input_length": len(text),
-        "output": f"[Aeterna Open-Core Preview]: Обработано {len(text)} симв. в режиме '{args.mode}' ({args.style}).",
-        "telemetry": {
-            "inference_time_sec": round(time.time() - start_time, 3),
-            "engine": "Aeterna SynergyCore (Standalone)"
-        }
-    }
-
-    if args.json:
-        output_text = json.dumps(result, ensure_ascii=False, indent=2)
+        if not text.strip():
+            print("Ошибка: пустой ввод", file=sys.stderr)
+            sys.exit(1)
+        tfile = tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False)
+        tfile.write(text)
+        tfile.close()
+        input_path = tfile.name
+        temp_input = input_path
     else:
-        output_text = result["output"]
+        if not os.path.exists(input_path):
+            print(f"Ошибка: входной файл не найден: {input_path}", file=sys.stderr)
+            sys.exit(1)
 
-    if args.output:
-        with open(args.output, "w", encoding="utf-8") as f:
-            f.write(output_text)
-        print(f"[AETERNA] Результат сохранен в {args.output}", file=sys.stderr)
-    else:
-        print(output_text)
+    try:
+        if binary_path:
+            cmd = [
+                binary_path,
+                "cli",
+                "--file", input_path,
+                "--style", args.style,
+                "--mode", args.mode
+            ]
+            if args.output:
+                cmd.extend(["--output", args.output])
+
+            proc = subprocess.run(cmd, capture_output=(args.output is None or args.json), text=True)
+            if proc.returncode != 0:
+                if proc.stderr:
+                    print(proc.stderr, file=sys.stderr)
+                sys.exit(proc.returncode)
+
+            if args.output is None:
+                if args.json:
+                    res = {
+                        "status": "success",
+                        "mode": args.mode,
+                        "style": args.style,
+                        "engine": "Aeterna SynergyCore (Standalone)",
+                        "output": proc.stdout.strip()
+                    }
+                    print(json.dumps(res, ensure_ascii=False, indent=2))
+                else:
+                    print(proc.stdout)
+        else:
+            with open(input_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            preview = f"[Aeterna Open-Core Preview]: Ядро SynergyCore не найдено. Входной текст ({len(content)} симв.) готов к обработке в режиме '{args.mode}' ({args.style})."
+            if args.json:
+                res = {
+                    "status": "preview",
+                    "mode": args.mode,
+                    "style": args.style,
+                    "engine": "Open-Core Staging",
+                    "output": preview
+                }
+                output_text = json.dumps(res, ensure_ascii=False, indent=2)
+            else:
+                output_text = preview
+
+            if args.output:
+                with open(args.output, "w", encoding="utf-8") as f:
+                    f.write(output_text)
+            else:
+                print(output_text)
+    finally:
+        if temp_input and os.path.exists(temp_input):
+            os.remove(temp_input)
 
 if __name__ == "__main__":
     main()
