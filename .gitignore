@@ -1,0 +1,22 @@
+# Bytecode & C-extensions
+__pycache__/
+*.py[cod]
+*.so
+*.c
+
+# Environments & configs
+.env
+venv/
+.venv/
+
+# Binaries & models
+*.gguf
+*.bin
+aet_rewrite
+dist/
+build/
+*.spec
+
+# Logs & locks
+*.log
+*.lock
